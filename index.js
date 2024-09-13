@@ -16,6 +16,9 @@ bot.telegram.setMyCommands(commands)
   .then(() => console.log('Bot commands set'))
   .catch(err => console.error('Failed to set bot commands:', err));
 
+// Initialize state
+const userState = {}; // Track search queries and pagination
+
 // Start command
 bot.start(async (ctx) => {
   await ctx.reply('Welcome to TeTube! Please enter a query to search for YouTube videos.\n\nType /about for more information.');
@@ -48,9 +51,19 @@ bot.command('about', (ctx) => {
 
 // Handle text (YouTube search query)
 bot.on('text', async (ctx) => {
+  const userId = ctx.from.id;
   const query = ctx.message.text;
 
-  const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&q=${encodeURIComponent(query)}&key=${process.env.YT_API_KEY}`;
+  userState[userId] = { query, pageToken: '' }; // Initialize user state
+  await fetchAndSendVideos(ctx);
+});
+
+// Fetch and send videos
+async function fetchAndSendVideos(ctx) {
+  const userId = ctx.from.id;
+  const { query, pageToken } = userState[userId];
+
+  const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&q=${encodeURIComponent(query)}&maxResults=3&pageToken=${pageToken}&key=${process.env.YT_API_KEY}`;
 
   try {
     const response = await fetch(url);
@@ -90,16 +103,39 @@ bot.on('text', async (ctx) => {
     const footer = `© ${currentYear} | Developed by MEHEDI AL TAYIB`;
 
     // Send the top 3 videos with footer
+    let message = '';
     sortedVideos.forEach((video, index) => {
       const videoUrl = `https://www.youtube.com/watch?v=${video.id.videoId}`;
-      ctx.reply(`${index + 1}. ${video.snippet.title} (${video.viewCount} views)\n${videoUrl}\n\n${footer}`);
+      message += `${index + 1}. ${video.snippet.title} (${video.viewCount} views)\n${videoUrl}\n\n`;
     });
+    message += footer;
+
+    const keyboard = data.nextPageToken ? [
+      [{ text: 'More Videos', callback_data: 'more_videos' }]
+    ] : [];
+
+    ctx.reply(message, {
+      reply_markup: {
+        inline_keyboard: keyboard
+      }
+    });
+
+    // Update user state
+    userState[userId].pageToken = data.nextPageToken || '';
   } catch (error) {
     console.error('Error:', error);  // Debug: Log the error
     ctx.reply('Error fetching videos. Please try again later.');
   }
+}
+
+// Handle Callback Queries
+bot.on('callback_query', async (ctx) => {
+  if (ctx.callbackQuery.data === 'more_videos') {
+    await fetchAndSendVideos(ctx);
+  }
 });
 
+// Start Bot
 bot.launch();
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
